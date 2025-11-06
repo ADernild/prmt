@@ -42,6 +42,7 @@ unicode-width = "0.2"
 bitflags = "2"
 chrono = "0.4"
 toml = "0.8"
+rgb2ansi256 = "0.1"
 
 [dev-dependencies]
 criterion = { version = "0.7", features = ["html_reports"] }

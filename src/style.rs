@@ -1,3 +1,4 @@
+use rgb2ansi256::rgb_to_ansi256;
 use std::fmt::Write;
 
 pub trait ModuleStyle: Sized {
@@ -19,7 +20,7 @@ pub enum Color {
 }
 
 impl Color {
-    fn push_ansi_code(&self, buf: &mut String) {
+    fn push_ansi_code(&self, buf: &mut String, use_256_color: bool) {
         match self {
             Color::Black => buf.push_str("\x1b[30m"),
             Color::Red => buf.push_str("\x1b[31m"),
@@ -31,7 +32,12 @@ impl Color {
             Color::White => buf.push_str("\x1b[37m"),
             Color::Hex(hex) => {
                 if let Ok((r, g, b)) = parse_hex_color(hex) {
-                    let _ = write!(buf, "\x1b[38;2;{};{};{}m", r, g, b);
+                    if use_256_color {
+                        let ansi_code = rgb_to_ansi256(r, g, b);
+                        let _ = write!(buf, "\x1b[38;5;{}m", ansi_code);
+                    } else {
+                        let _ = write!(buf, "\x1b[38;2;{};{};{}m", r, g, b);
+                    }
                 }
             }
         }
@@ -47,6 +53,7 @@ pub struct AnsiStyle {
     pub dim: bool,
     pub reverse: bool,
     pub strikethrough: bool,
+    pub use_256_color: bool,
 }
 
 impl ModuleStyle for AnsiStyle {
@@ -73,6 +80,7 @@ impl ModuleStyle for AnsiStyle {
                 "purple" | "magenta" => style.color = Some(Color::Purple),
                 "cyan" => style.color = Some(Color::Cyan),
                 "white" => style.color = Some(Color::White),
+                "256" => style.use_256_color = true,
                 hex if hex.starts_with('#') => {
                     style.color = Some(Color::Hex(hex.to_string()));
                 }
@@ -126,7 +134,7 @@ impl AnsiStyle {
 
     pub fn write_start_codes(&self, buf: &mut String) {
         if let Some(ref color) = self.color {
-            color.push_ansi_code(buf);
+            color.push_ansi_code(buf, self.use_256_color);
         }
         if self.bold {
             buf.push_str("\x1b[1m");
@@ -178,6 +186,13 @@ mod tests {
     fn test_parse_hex_color() {
         let style = AnsiStyle::parse("#00ff00").unwrap();
         assert!(matches!(style.color, Some(Color::Hex(_))));
+    }
+
+    #[test]
+    fn test_hex_color_with_256_mode() {
+        let style = AnsiStyle::parse("#ffa15e.256").unwrap();
+        let result = style.apply("test");
+        assert!(result.starts_with("\x1b[38;5;"));
     }
 
     #[test]
