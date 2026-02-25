@@ -45,19 +45,22 @@ cargo install prmt
 # Simple with named colors
 PS1='$(prmt --code $? "{path:cyan} {git:purple} {ok:green}{fail:red} ")'
 
+# Explicit shell wrapping (recommended for prompt usage)
+PS1='$(prmt --shell bash --code $? "{path:cyan} {git:purple} {ok:green}{fail:red} ")'
+
 # Or with hex colors for precise theming
 PS1='$(prmt --code $? "{path:#89dceb} {git:#f9e2af} {ok:#a6e3a1}{fail:#f38ba8} ")'
 ```
 
-**Zsh** – Add to `~/.zshrc`:
+**Zsh** – Add to `~/.zshrc` (auto-detected by default; `--shell zsh` forces wrapping):
 ```bash
 setopt PROMPT_SUBST
 
 # Simple with named colors
-PROMPT='$(prmt --code $? "{path:cyan} {git:purple} {ok:green}{fail:red} ")'
+PROMPT='$(prmt --shell zsh --code $? "{path:cyan} {git:purple} {ok:green}{fail:red} ")'
 
 # Or with hex colors for precise theming
-PROMPT='$(prmt --code $? "{path:#89dceb} {git:#f9e2af} {ok:#a6e3a1}{fail:#f38ba8} ")'
+PROMPT='$(prmt --shell zsh --code $? "{path:#89dceb} {git:#f9e2af} {ok:#a6e3a1}{fail:#f38ba8} ")'
 ```
 
 **Fish** – Add to `~/.config/fish/config.fish`:
@@ -87,6 +90,31 @@ PROMPT_COMMAND=_prmt_prompt
 ```
 
 *If you already use `PROMPT_COMMAND`, append `_prmt_prompt` instead of overwriting it.*
+
+### Bash transient prompt (no ble.sh)
+```bash
+PS1='$(prmt --shell bash --code $? "{path:cyan} {git:purple} {ok:green}{fail:red} ")'
+
+function _prmt_lastcommand() {
+    history | tail -1 | cut -c 8-
+}
+
+function _prmt_deleteprompt() {
+    local prompt=${PS1@P}
+    local lines=${prompt//[^$'\n']}
+    local count=${#lines}
+    tput cuu $((count + 1))
+    tput ed
+}
+
+function _prmt_indicator() {
+    prmt --shell bash --code ${1:-0} "{ok:green}> {fail:red}> "
+}
+
+PS0='\[$(_prmt_deleteprompt)\]$(_prmt_indicator ${LAST_EXIT_CODE}) $(_prmt_lastcommand)\n\[${PS1:0:$((EXPS0=1,0))}\]'
+PROMPT_COMMAND='LAST_EXIT_CODE=$?; [ "$EXPS0" = 0 ] && _prmt_deleteprompt && echo -e "$(_prmt_indicator ${LAST_EXIT_CODE})" || EXPS0=0'
+```
+This replaces the full prompt with a compact one after the command runs. It relies on `tput` and Bash 4.4+.
 
 ### Zsh with precmd
 ```zsh
@@ -135,6 +163,12 @@ prmt '{path:cyan:s} {ok:green}{fail:red} '
 ```bash
 prmt '{path:cyan} {git:purple} {rust:red:s: 🦀} {node:green:s: ⬢} {ok:green}{fail:red} '
 # Output: ~/projects/prmt on main 🦀1.90 ⬢20.5 ❯
+```
+
+**Identity (via env module)**
+```bash
+prmt '{env::USER}@{env::HOSTNAME} {path:cyan:s} {git:purple} {ok:green}{fail:red} '
+# Output: zenpie@workbox projects on main ❯
 ```
 
 **Compact with time**
@@ -280,6 +314,7 @@ prmt '{path:cyan} {time:dim:12h}' # ~/projects 02:30PM (with styling)
 | `deno` | `deno.json`, `deno.jsonc` | Deno version |
 | `bun` | `bun.lockb` | Bun version |
 | `go` | `go.mod` | Go version |
+| `env` | Requested variable is set/non-empty | Value of a specific environment variable (format = name) |
 | `time` | Always active | Current time in various formats |
 
 ### Type Values
@@ -297,6 +332,7 @@ prmt '{path:cyan} {time:dim:12h}' # ~/projects 02:30PM (with styling)
 **Git module**:
 - `full` or `f` - Branch with status (default)
 - `short` or `s` - Branch name only
+- Add `+owned` (or `+o`) to show only repos owned by the current user (e.g., `{git::full+owned}`)
 
 **Ok/Fail modules**:
 - `full` - Default symbol (❯)
@@ -308,6 +344,11 @@ prmt '{path:cyan} {time:dim:12h}' # ~/projects 02:30PM (with styling)
 - `24hs` or `24HS` - 24-hour format with seconds HH:MM:SS
 - `12h` or `12H` - 12-hour format hh:MMAM/PM
 - `12hs` or `12HS` - 12-hour format with seconds hh:MM:SSAM/PM
+
+**Env module**:
+- The `type` field is required and must be the environment variable name (e.g., `{env::USER}` or `{env:blue:PATH}`).
+- The module emits the variable value only when it exists and is non-empty; otherwise it returns nothing so the placeholder is effectively inactive.
+- Example for identity: `{env::USER}@{env::HOSTNAME}`
 
 ### Type Validation
 
@@ -351,6 +392,9 @@ prmt '{git::major}'
 **Modifiers**: `bold`, `dim`, `italic`, `underline`, `reverse`, `strikethrough`
 
 Combine with dots: `cyan.bold`, `red.dim.italic`
+
+**Background colors**: use `fg+bg` or `+bg` (background only), then modifiers.
+Examples: `#ffffff+#333333`, `+blue`, `cyan+#222.dim`
 
 ### Escaping
 

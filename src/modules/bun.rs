@@ -1,4 +1,5 @@
 use crate::error::Result;
+use crate::memo::{BUN_VERSION, memoized_version};
 use crate::module_trait::{Module, ModuleContext};
 use crate::modules::utils;
 use std::process::Command;
@@ -18,40 +19,45 @@ impl BunModule {
 }
 
 impl Module for BunModule {
+    fn fs_markers(&self) -> &'static [&'static str] {
+        &["bun.lockb", "bunfig.toml"]
+    }
+
     fn render(&self, format: &str, context: &ModuleContext) -> Result<Option<String>> {
-        if utils::find_upward("bun.lockb")
-            .or_else(|| utils::find_upward("bunfig.toml"))
-            .is_none()
-        {
+        let has_marker = ["bun.lockb", "bunfig.toml"]
+            .into_iter()
+            .any(|marker| context.marker_path(marker).is_some());
+        if !has_marker {
             return Ok(None);
         }
 
         if context.no_version {
-            return Ok(Some("bun".to_string()));
+            return Ok(Some(String::new()));
         }
 
         // Validate and normalize format
         let normalized_format = utils::validate_version_format(format, "bun")?;
 
-        let output = match Command::new("bun").arg("--version").output() {
-            Ok(o) if o.status.success() => o,
-            _ => return Ok(None),
+        let version = match memoized_version(&BUN_VERSION, get_bun_version) {
+            Some(v) => v,
+            None => return Ok(None),
         };
-
-        let version = String::from_utf8_lossy(&output.stdout).trim().to_string();
+        let version_str = version.as_ref();
 
         match normalized_format {
-            "full" => Ok(Some(version)),
-            "short" => {
-                let parts: Vec<&str> = version.split('.').collect();
-                if parts.len() >= 2 {
-                    Ok(Some(format!("{}.{}", parts[0], parts[1])))
-                } else {
-                    Ok(Some(version))
-                }
-            }
-            "major" => Ok(version.split('.').next().map(|s| s.to_string())),
+            "full" => Ok(Some(version_str.to_string())),
+            "short" => Ok(Some(utils::shorten_version(version_str))),
+            "major" => Ok(version_str.split('.').next().map(|s| s.to_string())),
             _ => unreachable!("validate_version_format should have caught this"),
         }
     }
+}
+
+#[cold]
+fn get_bun_version() -> Option<String> {
+    let output = Command::new("bun").arg("--version").output().ok()?;
+    if !output.status.success() {
+        return None;
+    }
+    Some(String::from_utf8_lossy(&output.stdout).trim().to_string())
 }

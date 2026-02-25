@@ -72,18 +72,18 @@ impl<'a> Parser<'a> {
 
         if let Some(offset) = memchr::memchr3(b'{', b'\\', b'}', self.remaining()) {
             let abs_pos = self.pos + offset;
-            match self.bytes[abs_pos] {
+            if abs_pos > start {
+                self.skip_to(abs_pos);
+                return Some(Token::Text(Cow::Borrowed(unsafe {
+                    self.current_slice(start)
+                })));
+            }
+
+            let token = match self.bytes[abs_pos] {
                 b'\\' => {
                     if abs_pos + 1 < self.bytes.len() {
                         match self.bytes[abs_pos + 1] {
                             b'{' | b'}' | b'\\' | b'n' | b't' | b':' => {
-                                if abs_pos > start {
-                                    self.skip_to(abs_pos);
-                                    return Some(Token::Text(Cow::Borrowed(unsafe {
-                                        self.current_slice(start)
-                                    })));
-                                }
-
                                 let escaped = match self.bytes[abs_pos + 1] {
                                     b'n' => "\n",
                                     b't' => "\t",
@@ -94,69 +94,64 @@ impl<'a> Parser<'a> {
                                     _ => unreachable!(),
                                 };
                                 self.skip_to(abs_pos + 2);
-                                return Some(Token::Text(Cow::Borrowed(escaped)));
+                                Some(Token::Text(Cow::Borrowed(escaped)))
                             }
                             _ => {
-                                self.skip_to(abs_pos + 2);
-                                return self.next_token();
+                                self.skip_to(abs_pos + 1);
+                                Some(Token::Text(Cow::Borrowed("\\")))
                             }
                         }
                     } else {
                         self.skip_to(self.bytes.len());
-                        if start < self.bytes.len() {
-                            return Some(Token::Text(Cow::Borrowed(unsafe {
-                                self.current_slice(start)
-                            })));
-                        }
-                        return None;
+                        Some(Token::Text(Cow::Borrowed("\\")))
                     }
                 }
                 b'{' => {
-                    if abs_pos > start {
-                        self.skip_to(abs_pos);
-                        return Some(Token::Text(Cow::Borrowed(unsafe {
-                            self.current_slice(start)
-                        })));
-                    }
-
-                    if let Some(end_offset) = memchr::memchr(b'}', &self.bytes[abs_pos + 1..]) {
-                        let end_pos = abs_pos + 1 + end_offset;
+                    if let Some(end_pos) = find_unescaped(self.bytes, abs_pos + 1, b'}') {
                         let content = &self.bytes[abs_pos + 1..end_pos];
 
                         if let Some(params) =
                             parse_placeholder(unsafe { std::str::from_utf8_unchecked(content) })
                         {
                             self.skip_to(end_pos + 1);
-                            return Some(Token::Placeholder(params));
+                            Some(Token::Placeholder(params))
+                        } else {
+                            self.skip_to(abs_pos + 1);
+                            Some(Token::Text(Cow::Borrowed("{")))
                         }
+                    } else {
+                        self.skip_to(abs_pos + 1);
+                        Some(Token::Text(Cow::Borrowed("{")))
                     }
-
-                    self.skip_to(abs_pos + 1);
-                    return Some(Token::Text(Cow::Borrowed("{")));
                 }
                 b'}' => {
-                    if abs_pos > start {
-                        self.skip_to(abs_pos);
-                        return Some(Token::Text(Cow::Borrowed(unsafe {
-                            self.current_slice(start)
-                        })));
-                    }
                     self.skip_to(abs_pos + 1);
-                    return Some(Token::Text(Cow::Borrowed("}")));
+                    Some(Token::Text(Cow::Borrowed("}")))
                 }
                 _ => unreachable!(),
-            }
-        } else {
-            self.skip_to(self.bytes.len());
-            if start < self.bytes.len() {
-                return Some(Token::Text(Cow::Borrowed(unsafe {
-                    self.current_slice(start)
-                })));
-            }
+            };
+
+            return token;
         }
 
-        None
+        self.skip_to(self.bytes.len());
+        Some(Token::Text(Cow::Borrowed(unsafe {
+            self.current_slice(start)
+        })))
     }
+}
+
+fn find_unescaped(bytes: &[u8], mut i: usize, target: u8) -> Option<usize> {
+    while i < bytes.len() {
+        let offset = memchr::memchr2(b'\\', target, &bytes[i..])?;
+        let pos = i + offset;
+        if bytes[pos] == b'\\' {
+            i = pos + 2;
+            continue;
+        }
+        return Some(pos);
+    }
+    None
 }
 
 fn parse_placeholder(content: &str) -> Option<Params> {
@@ -288,6 +283,17 @@ mod tests {
     }
 
     #[test]
+    fn test_escaped_closing_brace_in_placeholder() {
+        let tokens = parse("{path:::pre\\}:suf}");
+        if let Token::Placeholder(params) = &tokens[0] {
+            assert_eq!(params.prefix, "pre}");
+            assert_eq!(params.suffix, "suf");
+        } else {
+            panic!("Expected placeholder");
+        }
+    }
+
+    #[test]
     fn test_escaped_braces_in_text() {
         let tokens = parse("\\{not a placeholder\\}");
         assert_eq!(
@@ -313,6 +319,19 @@ mod tests {
                 Token::Text(Cow::Borrowed("Tabbed")),
             ]
         );
+    }
+
+    #[test]
+    fn test_unknown_escape_preserves_backslash() {
+        let tokens = parse("a\\qz");
+        let combined: String = tokens
+            .iter()
+            .map(|t| match t {
+                Token::Text(s) => s.as_ref(),
+                _ => panic!("Expected text token"),
+            })
+            .collect();
+        assert_eq!(combined, "a\\qz");
     }
 
     #[test]

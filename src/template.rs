@@ -2,7 +2,8 @@ use crate::error::Result;
 use crate::module_trait::ModuleContext;
 use crate::parser::{Token, parse};
 use crate::registry::ModuleRegistry;
-use crate::style::{AnsiStyle, ModuleStyle};
+use crate::style::{AnsiStyle, ModuleStyle, global_no_color};
+use is_terminal::IsTerminal;
 
 /// A parsed template that can be rendered multiple times efficiently
 pub struct Template<'a> {
@@ -26,9 +27,7 @@ impl<'a> Template<'a> {
     pub fn render(&self, registry: &ModuleRegistry, context: &ModuleContext) -> Result<String> {
         let mut output = String::with_capacity(self.estimated_size);
 
-        // Check for NO_COLOR environment variable
-        let no_color = std::env::var("NO_COLOR").is_ok()
-            || !is_terminal::IsTerminal::is_terminal(&std::io::stdout());
+        let no_color = global_no_color() || !IsTerminal::is_terminal(&std::io::stdout());
 
         for token in &self.tokens {
             match token {
@@ -55,7 +54,7 @@ impl<'a> Template<'a> {
                                 }
                             })?;
 
-                            style.write_start_codes(&mut output);
+                            style.write_start_codes(&mut output, context.shell);
                             if has_prefix {
                                 output.push_str(&params.prefix);
                             }
@@ -63,7 +62,7 @@ impl<'a> Template<'a> {
                             if has_suffix {
                                 output.push_str(&params.suffix);
                             }
-                            style.write_reset(&mut output);
+                            style.write_reset(&mut output, context.shell);
                         } else {
                             if has_prefix {
                                 output.push_str(&params.prefix);
